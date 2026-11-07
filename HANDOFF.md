@@ -1,0 +1,252 @@
+# Handoff — Claude of Duty
+
+Browser-native tactical FPS, Three.js r180 on WebGL2, Vite 7, Playwright.
+One map (sunlit North African market district), solo player vs 6 AI, custom
+everything: renderer, physics, navmesh, procedural audio, procedural map.
+The original brief with all constraints and quality gates is `PROMPT.md`.
+Repo: https://github.com/Leonxlnx/claude-of-duty (push to `main` after every
+verified chunk — the user wants frequent pushes).
+
+## Commands
+
+- `npm run dev` — dev server on 5173 (user plays here; may already be running)
+- `npm run build` — build to `dist/` (~2s)
+- `npm run preview` — serves `dist/` on 4319 (**tests and tools expect this
+  to be running**; check before debugging "connection refused")
+- `npx playwright test --reporter=list` — full suite, ~6 min, **41 tests, all
+  green** as of 2026-08-08. The two long-standing gunplay flakes are fixed
+  rather than tolerated: they aimed at a live agent and paced their bursts on
+  the wall clock, so they raced the AI's footwork and fired a different number
+  of rounds on every machine. `h.freezeAI()` holds the opposition still while
+  still posing it, and the bursts wait on simulated seconds.
+- `node tools/eval.mjs <snippet.js>` — evaluate a JS snippet against the
+  running game (`g` = game, `h` = harness) and print the JSON result. Use
+  this for any question about state. Snippets live in `tools/snippets/`.
+- `node tools/shot.mjs <out.png> "?auto=1&dynres=0" <waitMs> "" <snippet>` —
+  one screenshot with a pose snippet
+- `node tools/gauntlet-shots.mjs shots/gauntlet/<round>` — boots once,
+  captures the standard six poses (street/ads/plaza/alley/enemy/sky)
+
+Set `$env:PORT=4319` for the tools (PowerShell). Headless rendering uses
+SwiftShader: expect ~14% sim speed under load — that is why the harness has
+`h.wait(seconds)` (simulated seconds, not wall clock). **Always use sim-time
+waits in tests**, wall-clock waits are how half the old flakes happened.
+
+## Method: the Gauntlet Loop (user explicitly wants this)
+
+Iterate in rounds against a hard bar (AAA market-district FPS, per
+`PROMPT.md`): capture `tools/gauntlet-shots.mjs`, read the images yourself
+AND spawn independent critic subagents with fresh context, fix the biggest
+gap, re-shoot, verify, push. Log each round in `WORKBENCH.md` (history of
+rounds 0–2 is there). Critics can be wrong about *causes* (they judged a
+broken-lighting build harshly on geometry) — always verify their findings
+against the pixels yourself before building.
+
+## State: what was just done (all pushed)
+
+- **Movement**: acceleration model fixed (speeds actually reach their caps),
+  slide on C out of a run, grenades on B (hold LMB to charge), solo scoring.
+- **Spawns**: navmesh takes exact building footprints from the generator +
+  a `spawnable` mask excluding the service strip behind the outer building
+  rows. Nobody spawns indoors or behind the map. Tested.
+- **Sky/light**: sun at 57° nearly white, cloud radiance neutral with a
+  cluster mask (distinct cumulus), LUT warm push halved. The old rose tint
+  is gone. A distant-skyline backdrop breaks the boundary-wall sightlines.
+- **Weapon**: wrapped sun key + neutral shoulder fill in the viewmodel light
+  rig (`world.glsl.js`, `uViewmodelLight` block) — receiver reads grey now,
+  not navy. Optic stays centred while leaning (lean offset fades with ADS).
+- **AI**: flees live grenades (tested), flinches off its firing solution
+  when hit, decaying `stress` widens its fire under pressure.
+- **Perf**: far shadow cascades alternate frames (~25% off the heaviest GPU
+  pass); CPU profile healthy (render 1.4ms, AI 1.0ms on a mid machine).
+- **HUD**: clusters glide in on deploy; menu footer restyled as keycaps.
+
+## THE CURSOR TRAP — SOLVED. It was the test suite, not the game.
+
+**A headless Chromium still applies the OS cursor clip when a page takes
+pointer lock, and it clips to its own viewport at the screen origin.** Every
+`?auto=1` boot — the Playwright suite, `shot.mjs`, `eval.mjs`,
+`gauntlet-shots.mjs` — took the lock a few hundred ms after start. So for the
+length of a six-minute test run the developer's real desktop cursor was penned
+into a 1280x720 box in the top-left corner of a 1920x1200 screen. Alt-Tab
+cleared it because Windows drops the clip when the clipping window loses
+foreground; the next boot took it straight back.
+
+That is why the user could say, correctly, "it never happens when I'm in the
+game, only when you're developing" — and why three rounds of page-side fixes
+could not touch it. Nothing a player does was ever involved.
+
+Caught by leaving `tools/cursor-guard.ps1 -Watch` running: it logged a stream
+of `released confined clip 1280x720 at 0,0` during a test run and nothing at
+any other time. Fixed by `requestLock()` returning early under
+`navigator.webdriver` — the harness injects input directly and never needed the
+lock. Verified: a smoke run that previously produced a release every few
+seconds now produces none.
+
+**If you add a tool that boots the game, it inherits this fix automatically.
+Do not "restore" pointer lock for automation.**
+
+### Everything below is still in place, and still worth having
+
+They were aimed at a Chromium-side clip that turned out not to be the cause,
+but each fixed a real defect on the way.
+
+**The mechanism is confirmed, with numbers.** On this machine the physical
+desktop is **1920x1200** and the display scaling is **125%**, so the *logical*
+desktop is **1536x960**. A cursor clip written in logical coordinates and
+applied against the physical desktop confines the cursor to the top-left
+1536x960 of the screen — which is exactly the symptom, and exactly the region
+reported. Verified by planting that rectangle with `ClipCursor` and watching
+the cursor behave as described.
+
+No web page can release it: the clip belongs to the browser process, not to the
+document. So the release lives outside the game:
+
+- `tools/unstick-cursor.cmd` — double-click to release it right now.
+- `tools/unstick-cursor.cmd watch` (or `cursor-guard.ps1 -Watch`) — leaves a
+  guard running that releases it whenever it reappears. The guard only fires on
+  this specific signature (anchored at the desktop origin, sized to the desktop
+  divided by the DPI factor, within 3 px) so a real fullscreen game confining
+  the cursor to a monitor is left alone.
+
+Both tested: planting a 1536x960 clip and running the guard released it and
+restored the full 1920x1200.
+
+### Root cause inside the game (layer 4)
+
+**The bug was in this repo, not only in Chromium.** `Game._bindEvents` assigned
+its lock-loss handler to `input.onLockChange`; `Input` only ever calls
+`onPointerLockChange`. The auto-pause therefore never ran once. Consequences,
+which match every symptom the user described:
+
+- Escape ends the pointer lock. Without Keyboard Lock (which needs fullscreen,
+  and fullscreen has been opt-in since layer 2) the browser consumes that
+  keydown, so `onPauseRequested` never fires either. The match stayed in
+  `playing` with no menu and no mouse handling.
+- `src/main.js` had `canvas.mousedown -> input.requestLock()` guarded only on
+  `state === 'playing'`. So the next click anywhere on the game took the mouse
+  straight back. Give it back, click, gone again — indefinitely.
+- `requestLock` decided success by awaiting the return of
+  `requestPointerLock()`, which is `undefined` on older engines: `await
+  undefined` is `true`, so a *refused* request reported success and the
+  `_unwind()` safety net was dead code. Pointer Lock 2.0 specifies that a
+  request made straight after the browser's own unlock gesture is refused —
+  Escape-then-click is exactly that, so this path was being hit routinely.
+
+Fixed and pushed: handler wired to the real name, implicit relock deleted (the
+mouse is only taken from Deploy or Resume), acquisition determined from the
+`pointerlockchange` / `pointerlockerror` events, `pointerlockerror` returns to
+the pause menu, and leaving fullscreen by any route clears the flag and the
+keyboard lock. Guarded by the smoke test "losing pointer lock pauses, and a
+click does not take the mouse back", which exits a real lock — verified to fail
+against the old property name.
+
+**Check the port before believing any bug report.** On 2026-08-08 the user was
+still hitting the trap after all of this shipped, because **port 5173 was
+serving a different project entirely** ("Codex Logo Animation") — this game's
+dev server was not running, so the tab they were playing had been loaded from a
+server that no longer existed and kept running its old bundle in memory
+forever. No fix could ever reach it. Verify with:
+
+```bash
+curl -s http://localhost:5173/ | head -5
+```
+
+Known-good URLs, both verified to carry the fixes: `http://localhost:4319/`
+(preview, serves `dist/` — rebuild with `npm run build`) and
+`http://localhost:5174/` (dev server, started with
+`npm run dev -- --port 5174 --strictPort false` because 5173 was taken). The
+start screen now prints a build stamp and the mouse settings in the footer, so
+which build is on screen is readable rather than guessed.
+
+If a trapped OS cursor still survives *after* the match has paused itself and
+the build stamp is current, that is the Chromium-side clip and the layers below
+are what address it.
+
+### Layer 5 — no fullscreen, and a keyboard way out
+
+The game never calls `requestFullscreen` any more and `fullscreenOnPlay` is
+gone from settings. In fullscreen Chromium's cursor clip is the whole screen,
+so a stale one pins the cursor into a quarter of the *desktop*; windowed, the
+worst case is a quarter of a window. Keyboard Lock was the only reason for it
+and `beforeunload` replaced that. The pause menu is also keyboard-operable now
+(Enter resumes, Q abandons) so a confined cursor can never lock a player into a
+match they cannot leave.
+
+### The three earlier layers (all still in place)
+
+1. Symmetric unwind — keyboard lock + fullscreen released whenever pointer
+   lock ends, and on `visibilitychange`/`blur` (`src/core/Input.js`).
+2. `fullscreenOnPlay` defaulted off, then was **removed entirely** by layer 5.
+3. `unadjustedMovement` (raw input) **defaults off** — its Windows path
+   is implicated in exactly this stale-clip bug on scaled displays.
+
+Escape hatches for the player, in order of certainty:
+`tools/unstick-cursor.cmd` → Ctrl+Alt+Del then Escape → Alt+Tab.
+
+## Bugs found by playing, and what they turned out to be
+
+Worth reading before chasing a "feel" complaint — three of these were real
+defects wearing a subjective costume.
+
+- **"Shots should clearly be there."** `_raycastCharacters` early-rejects
+  against a bounding sphere centred on `character.position` — the rig root, on
+  the ground — with a fixed 1.15 m radius. A standing body is 1.8 m tall, so a
+  level shot at chest or head height passes ~1.3 m from that centre and was
+  discarded before any capsule was tested. Nine rounds down the eye-to-chest
+  line took a target from 100 health to 100. The sphere is now derived from the
+  hitboxes it bounds. `PlayerTarget` was always correct, which is why the AI
+  could hit the player but not the reverse.
+- **"Walking is laggy, turning fast bugs."** Not framerate — measured flat at
+  16.7 ms with no jitter (`tools/snippets/walk-profile.js`). It was motion
+  blur: `MAX_BLUR` at 42 px of streak, and a shutter rescale that *amplified*
+  above 60 fps (2.4x at 144 Hz), so the better the monitor the worse the smear.
+- **Night looked like an overcast day.** Auto-exposure keys the average frame
+  luminance to a target, so dimming the sun 25x made the meter open 25x and
+  hand back the same picture. Needs an EV bias *and* the clamp window moved
+  with it — `uMinEV` is a ceiling on how far the meter may open, and night was
+  hitting it and spending the whole bias.
+
+**Method note:** every one of these was found by measuring, not by looking. A
+probe that prints numbers (`walk-profile`, `exposure-probe`, `aim-check`,
+`tod-check`) settled in one run what staring at screenshots could not.
+
+## Open work, in priority order
+
+1. **Environment round 5.** Round 4 stocked the market, lifted the roof
+   clutter over the parapets and broke up the ground — see `WORKBENCH.md` for
+   what the critics found and which of it survived checking. Still open, in
+   the critics' order: the blue-grey barrier slabs have no material identity;
+   facades are large flat areas with no plaster patching or staining under
+   sills; every wall meets the ground on a razor-clean line with no dirt
+   fillet; awnings are rigid quads at a uniform height with no sag, sitting
+   high enough over the counters to read as a hollow void.
+2. **Enemy characters, round 2.** Round 1 landed (palette, team panel, visible
+   carbine — see `shots/enemy/round3/`). Still weak: the plate carrier does not
+   separate from the uniform on the sunlit side, the face is a dark void under
+   the helmet, and the silhouette is still fairly slab-sided. Judge from
+   `weapon` and `torso` framings; they are the ones that show it.
+3. **HUD round 2**: kill feed styling, hit-marker pop, compass polish.
+4. **Performance round 2** if the user still reports load: cloud pass is
+   half-res already; next lever is AO resolution and the prepass at
+   dynamic scale.
+5. **Interior darkness response** — the dust and splinters when a round enters
+   a room are in (`Combat._exitSpall`), but how a dim interior reads from
+   outside when a round goes through has not been looked at.
+
+Done since the last handoff: the slide test, enemy presentation, near-miss
+suppression, penetration effects, environment round 4, the cursor trap, and
+both gunplay flakes. Suite is 42/42.
+
+## Verification habits that caught real bugs here
+
+- A throw inside `_render` silently aborts the frame and a dozen unrelated
+  visual tests fail instead — the smoke test "no state throws" exists for
+  this; keep it green.
+- After geometry/nav changes run `tools/snippets/spawn-audit.js` via
+  `eval.mjs` (60 respawn draws checked against footprints/margins/roofs).
+- After sky/light changes look at `sky.png` AND `street.png` yourself; the
+  SH ambient bake spreads any sky tint over the whole district.
+- The user plays the dev server on 5173: `npm run build` does not update
+  what they see; committing source does (Vite serves from disk). Tell them
+  to hard-refresh after fixes.

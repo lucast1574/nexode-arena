@@ -1,0 +1,16 @@
+node_modules
+dist
+test-results
+playwright-report
+
+# development scratch: screenshots and reference frames
+shots
+ref
+
+test-run.log
+cursor-guard.log
+
+.env
+.env.*
+*.pem
+*.key

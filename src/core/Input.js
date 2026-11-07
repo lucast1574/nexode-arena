@@ -1,0 +1,393 @@
+import { Settings } from './Settings.js';
+
+/**
+ * Ceiling on believable mouse speed, in pixels per second, and the floor of
+ * the per-event budget so a 1 kHz mouse is not throttled by its own tiny gaps.
+ */
+/**
+ * A fast 180 at default sensitivity is about 1600 pixels in ~150ms, so roughly
+ * 10500 px/s. 14000 sits comfortably above any real flick and well below the
+ * spikes, which arrive as several hundred pixels in a single event.
+ */
+const MAX_LOOK_SPEED = 14000;
+const MIN_LOOK_BUDGET = 150;
+/**
+ * Longest gap the budget may be earned over. Coalescing happens within a
+ * frame, so more than one slow frame of credit is not a thing that can
+ * legitimately accumulate — and letting it grow was the hole: after a pause
+ * the allowance reached thousands of pixels and waved the spike straight
+ * through, which is the bug this gate exists for.
+ */
+const MAX_LOOK_GAP = 0.04;
+
+/**
+ * Raw pointer-lock mouse + keyboard input. Mouse deltas are accumulated per
+ * frame from raw movementX/Y so camera response never depends on frame pacing
+ * beyond the accumulation window.
+ */
+export class Input {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.keys = new Map();
+    this.pressedThisFrame = new Set();
+    this.releasedThisFrame = new Set();
+    this._look = { x: 0, y: 0 };
+    this.mouseDX = 0;
+    this.mouseDY = 0;
+    this.wheel = 0;
+    this.buttons = [false, false, false];
+    this.buttonsPressed = [false, false, false];
+    this.locked = false;
+    this.enabled = true;
+    /** Bogus mouse deltas rejected. Diagnostic, and asserted in the tests. */
+    this.discardedLookSpikes = 0;
+    this._swallowNextMove = false;
+    this.onPointerLockChange = null;
+    this.onPointerLockError = null;
+    this.onPauseRequested = null;
+    // Keys the browser must keep even while the pointer is locked. Everything
+    // else is swallowed: crouch is Ctrl, so Ctrl+D bookmarks the page, Ctrl+S
+    // saves it and Ctrl+P opens print — all reachable by crouch-walking.
+    this._passThroughCodes = new Set(['F5', 'F11', 'F12']);
+    // ...and while it is not locked the menu is a normal focusable document, so
+    // only the keys that would move focus out from under it are taken.
+    this._blockedCodes = new Set(['Tab', 'F1', 'F3']);
+
+    this._bind();
+  }
+
+  _bind() {
+    const kd = (e) => {
+      if (!this.enabled) return;
+      // Escape is the browser's own way out of pointer lock and cannot be
+      // cancelled; F5/F11/F12 stay usable on purpose. Ctrl+W and Ctrl+T are
+      // reserved by the browser and cannot be blocked from a page at all,
+      // which is why nothing in the default binds pairs with them.
+      if (this.locked ? !this._passThroughCodes.has(e.code) : this._blockedCodes.has(e.code)) {
+        e.preventDefault();
+      }
+      if (e.repeat) return;
+      if (!this.keys.get(e.code)) this.pressedThisFrame.add(e.code);
+      this.keys.set(e.code, true);
+      if (e.code === 'Escape' && this.onPauseRequested) this.onPauseRequested();
+    };
+    const ku = (e) => {
+      this.keys.set(e.code, false);
+      this.releasedThisFrame.add(e.code);
+    };
+    window.addEventListener('keydown', kd, { passive: false });
+    window.addEventListener('keyup', ku);
+
+    /**
+     * Mouse look, with a sanity gate on each event.
+     *
+     * `movementX` is not always a real movement. Chromium hands out occasional
+     * enormous deltas around pointer lock — most reliably on the first event
+     * after the lock engages, where it reports the jump from wherever the
+     * cursor was to the centre of the screen, which on a 1920-wide display is
+     * up to about 960 pixels. Summed straight into the view at the default
+     * sensitivity that is ~110 degrees in one frame: the view snaps a right
+     * angle in the direction you were already turning, which is exactly what
+     * it feels like.
+     *
+     * So: swallow the first event after acquiring the lock, and reject any
+     * single event that claims a speed no hand can produce. The ceiling is
+     * generous — 24000 px/s is about 2700 degrees per second at default
+     * sensitivity, several times faster than any real flick — and it scales
+     * with the gap since the last event, because a stalled frame legitimately
+     * coalesces more movement into one delivery. Rejecting rather than
+     * clamping: a clamped spike is still a large bogus turn, and dropping one
+     * sample costs nothing.
+     */
+    let lastMoveAt = 0;
+    window.addEventListener('mousemove', (e) => {
+      if (!this.locked || !this.enabled) return;
+      const now = performance.now();
+      const gap = lastMoveAt ? Math.min(MAX_LOOK_GAP, (now - lastMoveAt) / 1000) : 0.016;
+      lastMoveAt = now;
+
+      if (this._swallowNextMove) { this._swallowNextMove = false; return; }
+
+      const dx = e.movementX || 0;
+      const dy = e.movementY || 0;
+      const limit = Math.max(MIN_LOOK_BUDGET, MAX_LOOK_SPEED * gap);
+      if (Math.abs(dx) > limit || Math.abs(dy) > limit) {
+        this.discardedLookSpikes++;
+        return;
+      }
+      this.mouseDX += dx;
+      this.mouseDY += dy;
+    });
+
+    this.canvas.addEventListener('mousedown', (e) => {
+      if (!this.locked) return;
+      e.preventDefault();
+      if (e.button < 3) {
+        if (!this.buttons[e.button]) this.buttonsPressed[e.button] = true;
+        this.buttons[e.button] = true;
+      }
+    });
+    window.addEventListener('mouseup', (e) => {
+      if (e.button < 3) this.buttons[e.button] = false;
+    });
+    window.addEventListener('wheel', (e) => { if (this.locked) this.wheel += Math.sign(e.deltaY); }, { passive: true });
+    this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    document.addEventListener('pointerlockchange', () => {
+      this.locked = document.pointerLockElement === this.canvas;
+      if (this.locked) {
+        // The first delivery after the lock engages carries the jump from the
+        // cursor's old position to the centre of the screen, not a movement.
+        this._swallowNextMove = true;
+        this._lockKeyboard();
+      }
+      else {
+        this._unwind();
+        this.keys.clear();
+        this.buttons = [false, false, false];
+      }
+      if (this.onPointerLockChange) this.onPointerLockChange(this.locked);
+    });
+    window.addEventListener('blur', () => {
+      this.keys.clear();
+      this.buttons = [false, false, false];
+      // Focus is leaving with the lock still held — alt-tab, a notification, a
+      // debugger. Give everything back now: a confinement held across a focus
+      // change is the state that goes stale.
+      this.releaseLock();
+    });
+    // A hidden tab must hold nothing. Anything left engaged here is exactly
+    // the state that outlives the tab in the compositor.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.releaseLock();
+    });
+    // The player can leave fullscreen without us — F11, Escape, the browser's
+    // own bubble. Forgetting that we entered it keeps `_unwind` honest about
+    // what it is allowed to tear down.
+    document.addEventListener('fullscreenchange', () => {
+      if (!document.fullscreenElement) {
+        this._enteredFullscreen = false;
+        this._unlockKeyboard();
+      }
+    });
+  }
+
+  /**
+   * Take the mouse, and — only if asked — fullscreen with it.
+   *
+   * Fullscreen is the one thing that lets the Keyboard Lock API hand over
+   * Ctrl+W, Ctrl+T and Ctrl+N. Nothing else can: those keydowns are consumed
+   * by the browser and never reach the document, so `preventDefault` has
+   * nothing to cancel and a page cannot refuse them.
+   *
+   * This was removed once, on the theory that fullscreen plus pointer lock was
+   * what stranded the OS cursor clip. That turned out to be wrong — the trap
+   * was the headless test suite taking pointer lock and clipping the cursor to
+   * its own viewport — so the trade is back on the table, and it is the
+   * player's to make: `captureShortcuts` is off by default and turning it on
+   * says "I want Ctrl to be mine, and I accept fullscreen for it".
+   */
+  async requestLock() {
+    if (this.locked) return;
+    // Automation never needs the real mouse, and taking it has a cost that
+    // lands on somebody else entirely.
+    //
+    // A headless Chromium still applies the OS cursor clip when a page takes
+    // pointer lock, and it clips to its own viewport at the screen origin. So
+    // every `?auto=1` boot of the test suite or a screenshot tool penned the
+    // *developer's* real desktop cursor into a 1280x720 box in the top-left
+    // corner of the screen, for as long as the run lasted. That is the cursor
+    // trap, in full: not something a player ever hit, which is exactly what
+    // was reported and what made it so hard to place. The harness injects
+    // input straight into this class and has never needed the lock.
+    if (navigator.webdriver) return;
+
+    // Fullscreen first: Keyboard Lock is only honoured while it is held, and
+    // the lock has to be in place before the first Ctrl+W, not after it.
+    if (Settings.data.captureShortcuts === true && !document.fullscreenElement) {
+      try {
+        await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+        this._enteredFullscreen = true;
+      } catch { /* denied or unsupported — the beforeunload confirm still nets it */ }
+    }
+    // Raw mouse input (unadjustedMovement) bypasses pointer acceleration, but
+    // on Windows it also takes a different cursor-confinement path — the one
+    // implicated when the visible cursor stays pinned to a corner of the
+    // screen after the lock ends on scaled displays. It is opt-in: aim feel
+    // costs a preference, a trapped cursor costs the whole session.
+    const wantRaw = Settings.data.rawInput === true;
+    const ok = wantRaw
+      ? (await this._attemptLock({ unadjustedMovement: true }) || await this._attemptLock())
+      : await this._attemptLock();
+    if (!ok) {
+      // Half-acquired is the dangerous state: fullscreen without pointer lock
+      // leaves the browser's cursor confinement with nothing to release it.
+      this._unwind();
+      this.onPointerLockError?.();
+    }
+  }
+
+  /**
+   * Ask for the lock and resolve with whether it was actually granted.
+   *
+   * Awaiting the return of `requestPointerLock()` does not answer that.
+   * Current Chromium returns a promise; older engines return `undefined`, and
+   * `await undefined` is a resolved `true` — so a refused request reported
+   * success and the game carried on believing it had the mouse. The events are
+   * the only reliable answer. Refusal is a normal outcome here and not an
+   * error: the spec has the browser reject a request made straight after its
+   * own unlock gesture, which is exactly what Escape-then-click looks like.
+   */
+  _attemptLock(options) {
+    return new Promise((resolve) => {
+      const held = () => document.pointerLockElement === this.canvas;
+      let settled = false;
+      const finish = (ok) => {
+        if (settled) return;
+        settled = true;
+        document.removeEventListener('pointerlockchange', onChange);
+        document.removeEventListener('pointerlockerror', onError);
+        clearTimeout(timer);
+        resolve(ok);
+      };
+      const onChange = () => finish(held());
+      const onError = () => finish(false);
+      document.addEventListener('pointerlockchange', onChange);
+      document.addEventListener('pointerlockerror', onError);
+      // Neither event is guaranteed to arrive — a headless browser fires
+      // nothing at all — so the wait is bounded and the DOM has the last word.
+      const timer = setTimeout(() => finish(held()), 1500);
+
+      try {
+        const pending = this.canvas.requestPointerLock(options);
+        if (pending && typeof pending.then === 'function') {
+          pending.then(() => finish(held()), () => finish(false));
+        }
+      } catch {
+        finish(false);
+      }
+    });
+  }
+
+  releaseLock() {
+    if (document.pointerLockElement) document.exitPointerLock();
+    else this._unwind();
+  }
+
+  /**
+   * Give back everything the lock took, together and in order.
+   *
+   * Chromium confines the OS cursor with a clip rectangle while the pointer is
+   * locked in fullscreen, and on displays with scaling that rectangle is
+   * computed in the wrong units — releasing only the pointer lock can leave a
+   * stale clip pinning the visible cursor into the top-left quarter of the
+   * screen until something else resets it. Tearing down keyboard lock and the
+   * fullscreen we entered whenever the pointer lock ends forces the browser to
+   * recompute, which is the only page-side lever there is.
+   */
+  _unwind() {
+    this._unlockKeyboard();
+    if (this._enteredFullscreen && document.fullscreenElement) {
+      this._enteredFullscreen = false;
+      document.exitFullscreen().catch(() => { /* already gone */ });
+    }
+  }
+
+  /**
+   * Take the keys the browser would otherwise eat — and only those.
+   *
+   * A page cannot cancel Ctrl+W with `preventDefault`; the keydown never
+   * arrives. The Keyboard Lock API is the only thing that can, and only while
+   * fullscreen is held. Locking a key routes it to the page with any modifier,
+   * so locking `KeyW` is what makes Ctrl+W ours.
+   *
+   * Deliberately not a blanket `lock()`. Locking everything also takes Escape,
+   * and then leaving fullscreen needs a long press that nobody discovers under
+   * fire — the player must always have an obvious way out, so Escape, F5, F11
+   * and F12 stay the browser's. These are the letters that pair with Ctrl into
+   * something destructive *and* sit under a hand on WASD.
+   */
+  _lockKeyboard() {
+    if (!document.fullscreenElement || !navigator.keyboard?.lock) return;
+    navigator.keyboard
+      .lock(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyR', 'KeyT', 'KeyN', 'KeyP'])
+      .catch(() => { /* not permitted; the beforeunload confirm still nets it */ });
+    this._keyboardLocked = true;
+  }
+
+  _unlockKeyboard() {
+    if (!this._keyboardLocked) return;
+    this._keyboardLocked = false;
+    try { navigator.keyboard.unlock(); } catch { /* already released */ }
+  }
+
+  /**
+   * Test seam. Pointer lock does not exist in a headless browser, so the
+   * automated harness pushes input through here instead of faking DOM events.
+   */
+  inject({ key, down, look, button }) {
+    if (key !== undefined) {
+      if (down && !this.keys.get(key)) this.pressedThisFrame.add(key);
+      if (!down) this.releasedThisFrame.add(key);
+      this.keys.set(key, !!down);
+    }
+    if (look) { this.mouseDX += look.x || 0; this.mouseDY += look.y || 0; }
+    if (button !== undefined) {
+      if (down && !this.buttons[button]) this.buttonsPressed[button] = true;
+      this.buttons[button] = !!down;
+    }
+  }
+
+  action(name) {
+    const code = Settings.data.keybinds[name];
+    if (!code) return false;
+    const mouse = mouseIndex(code);
+    return mouse >= 0 ? this.buttons[mouse] === true : this.keys.get(code) === true;
+  }
+
+  /**
+   * Edge-triggered actions, consumed on read.
+   *
+   * The simulation runs a fixed step and can take several substeps per rendered
+   * frame, so a press that merely sits in the set until the end of the frame
+   * fires its action once per substep — one tap of the fire selector would walk
+   * through every mode. Consuming here makes it exactly once per press.
+   */
+  actionPressed(name) {
+    const code = Settings.data.keybinds[name];
+    if (!code) return false;
+    const mouse = mouseIndex(code);
+    if (mouse >= 0) {
+      if (!this.buttonsPressed[mouse]) return false;
+      this.buttonsPressed[mouse] = false;
+      return true;
+    }
+    return this.pressedThisFrame.delete(code);
+  }
+
+  /**
+   * Consume the accumulated mouse delta, in radians of view rotation.
+   * The returned vector is reused between calls.
+   */
+  consumeLook() {
+    const s = Settings.data.sensitivity * 0.0022;
+    this._look.x = this.mouseDX * s;
+    this._look.y = this.mouseDY * s * (Settings.data.invertY ? -1 : 1);
+    this.mouseDX = 0;
+    this.mouseDY = 0;
+    return this._look;
+  }
+
+  /** Drop any edge nobody consumed, so it cannot leak into the next frame. */
+  endFrame() {
+    this.pressedThisFrame.clear();
+    this.releasedThisFrame.clear();
+    this.buttonsPressed[0] = this.buttonsPressed[1] = this.buttonsPressed[2] = false;
+    this.wheel = 0;
+  }
+}
+
+/** Bindings are stored as key codes or `Mouse0`/`Mouse1`/`Mouse2`. */
+function mouseIndex(code) {
+  return code.startsWith('Mouse') ? Number(code.slice(5)) : -1;
+}
