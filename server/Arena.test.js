@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import * as THREE from 'three';
 import WebSocket from 'ws';
 import { startServer } from './index.js';
+import { Arena } from './Arena.js';
 
 function inbox(ws) {
   const queue = [], waiters = [];
@@ -38,6 +39,9 @@ test('public room validates clients, owns damage and respawn, and cleans up disc
   try {
     assert.equal((await fetch(url + '/healthz')).status, 200);
     assert.equal((await fetch(url + '/server/index.js')).status, 404);
+    const html = await fetch(url).then((r) => r.text());
+    assert.match(html, /game\.js\?v=[a-z0-9]+/);
+    assert.match(html, /game\.css\?v=[a-z0-9]+/);
     const unnamed = await connect('');
     const [code] = await once(unnamed.ws, 'close');
     assert.equal(code, 1008);
@@ -112,20 +116,47 @@ test('public room validates clients, owns damage and respawn, and cleans up disc
     arena.step(8.1);
     assert.equal(arena.round, round + 1);
     assert.equal(arena.director.characters.length, 6);
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 10; i++) {
       const c = await connect(`Friend-${i}`); await c.next('welcome');
     }
-    const overflow = await connect('Overflow');
-    assert.equal((await once(overflow.ws, 'close'))[0], 1013);
-    assert.equal(arena.players.size, 8);
+    const extra = await connect('Otro amigo');
+    assert.equal((await extra.next('welcome')).state.players, 13);
+    assert.equal(arena.players.size, 13);
+    assert.equal((await fetch(url + '/api/status').then((r) => r.json())).maxPlayers, null);
     const materials = arena.factory.materials.length;
     const closed = once(a.ws, 'close'); a.ws.close(); await closed;
     await new Promise((resolve) => setTimeout(resolve, 30));
-    assert.equal(arena.players.size, 7);
+    assert.equal(arena.players.size, 12);
     assert.equal(arena.factory.materials.length, materials - 1);
     assert.equal(arena.director.externalTargets.some((c) => c.id === wa.id), false);
   } finally {
     for (const ws of sockets) ws.terminate();
     await app.close();
+  }
+});
+
+test('six bots keep respawning, including after a temporarily unavailable spawn', () => {
+  const arena = new Arena();
+  try {
+    const player = arena.join('Lucas', () => {});
+    const bot = arena.director.characters[0];
+    const respawn = arena.director.respawn.bind(arena.director);
+    bot.applyDamage(500, { source: player.character, point: bot.position.clone() });
+    arena.director.respawn = () => {}; // A crowded map must not lose its bot.
+    for (let t = 0; t < 180; t++) arena.step(1 / 30);
+    assert.equal(bot.alive, false);
+    assert.ok(arena.director._respawnQueue.some((e) => e.agent.character === bot));
+    arena.director.respawn = respawn;
+    for (let t = 0; t < 30; t++) arena.step(1 / 30);
+    assert.equal(bot.alive, true);
+    for (let death = 0; death < 3; death++) {
+      bot.applyDamage(500, { source: player.character, point: bot.position.clone() });
+      for (let t = 0; t < 180; t++) arena.step(1 / 30);
+      assert.equal(bot.alive, true);
+      assert.equal(arena.director.characters.length, 6);
+    }
+  } finally {
+    for (const p of arena.players.values()) arena.leave(p.id);
+    arena.director.dispose(); arena.combat.dispose();
   }
 });

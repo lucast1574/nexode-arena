@@ -201,7 +201,10 @@ export class Director {
       entry.time -= dt;
       if (entry.time <= 0) {
         this.respawn(entry.agent);
-        this._respawnQueue.splice(i, 1);
+        // A temporarily crowded map may have no safe spawn. Keep retrying
+        // rather than silently removing the dead bot from the respawn queue.
+        if (entry.agent.alive) this._respawnQueue.splice(i, 1);
+        else entry.time = 0.5;
       }
     }
 

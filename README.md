@@ -1,7 +1,7 @@
 # Nexode Arena
 
 FPS 3D para navegador preparado para la demostración de Nexode en la hackathon.
-Una sala pública cooperativa para hasta ocho jugadores contra seis bots. Cada jugador
+Una sala pública cooperativa sin cupo fijo de jugadores contra seis bots. Cada jugador
 escribe su nombre antes de entrar. También incluye práctica individual sin conexión.
 
 ## Jugar con amigos
@@ -13,6 +13,8 @@ Los jugadores forman equipo contra los bots y no hay fuego amigo entre compañer
 Las rondas duran diez minutos o cien bajas; la siguiente comienza automáticamente.
 Al pulsar Escape se liberan tus controles, pero la partida continúa y puedes recibir daño.
 Las reapariciones y las bajas las decide el servidor. No hay cuentas ni progreso persistente.
+Los seis bots siguen reapareciendo durante las partidas, aunque entren más jugadores.
+No se impone un máximo de jugadores por software; la capacidad depende del servidor.
 Si se reinicia el servicio, se reinicia la sala; vuelve a entrar desde el menú.
 
 ## Ejecutar localmente

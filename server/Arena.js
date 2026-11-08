@@ -13,7 +13,6 @@ import { SeededRandom, WORLD_SEED } from '../src/core/SeededRandom.js';
 import { CARBINE } from '../src/weapons/Weapon.js';
 import { ServerCombat } from './ServerCombat.js';
 
-export const MAX_PLAYERS = 8;
 export const BOT_COUNT = 6;
 export const PROTOCOL = 1;
 const vector = (v) => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
@@ -75,7 +74,6 @@ export class Arena {
   }
 
   join(name, send) {
-    if (this.players.size >= MAX_PLAYERS) return null;
     const id = `p-${randomUUID()}`;
     // Names reach existing scoreboard/killfeed templates: allow text characters only.
     const clean = String(name ?? '').replace(/[^\p{L}\p{N} _-]/gu, '').trim().slice(0, 20);
@@ -230,7 +228,7 @@ export class Arena {
   snapshot() {
     const entities = [...this.director.characters, ...[...this.players.values()].map((p) => p.character)];
     return { round: this.round, timeLeft: this.match.timeLeft, scores: this.match.scores,
-      ended: this.match.ended, players: this.players.size, maxPlayers: MAX_PLAYERS,
+      ended: this.match.ended, players: this.players.size, maxPlayers: null,
       bots: BOT_COUNT, roster: [...this.match.players.values()],
       entities: entities.map((c) => ({ id: c.id, name: c.name, team: c.team,
         position: arr(c.position), velocity: arr(c.velocity), yaw: c.yaw, pitch: c.pitch,

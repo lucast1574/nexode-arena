@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { Arena, BOT_COUNT, MAX_PLAYERS, PROTOCOL } from './Arena.js';
+import { Arena, BOT_COUNT, PROTOCOL } from './Arena.js';
 
 const assets = new Map([
   ['/', ['../dist/index.html', 'text/html; charset=utf-8']],
@@ -26,7 +26,7 @@ export async function startServer({ port = Number(process.env.PORT || 3000), hos
     if (path === '/api/status') {
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
         room: 'Suq Al-Rimal', protocol: PROTOCOL, players: arena.players.size,
-        maxPlayers: MAX_PLAYERS, bots: BOT_COUNT, round: arena.round
+        maxPlayers: null, bots: BOT_COUNT, round: arena.round
       })); return;
     }
     const file = files.get(path);
@@ -41,7 +41,7 @@ export async function startServer({ port = Number(process.env.PORT || 3000), hos
       try { validOrigin = new URL(req.headers.origin).host === req.headers.host; }
       catch { validOrigin = false; }
     }
-    if (req.url !== '/arena' || !validOrigin || wss.clients.size >= MAX_PLAYERS + 8) {
+    if (req.url !== '/arena' || !validOrigin) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws));
@@ -75,7 +75,7 @@ export async function startServer({ port = Number(process.env.PORT || 3000), hos
         }
         player = arena.join(m.name, send);
         clearTimeout(deadline);
-        if (!player) ws.close(1013, 'Room full (8 players)');
+        if (!player) ws.close(1008, 'Escribe un nombre válido');
       } else arena.receive(player, m);
     });
     ws.on('close', () => {

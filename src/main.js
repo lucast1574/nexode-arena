@@ -33,8 +33,10 @@ game.boot().then(() => {
   window.__game = game;
   installHarness(game);
   window.__ready = true;
-  // ?auto=1 drops straight into a match, which is how the tests run.
-  if (new URLSearchParams(location.search).get('auto') === '1') game.startMatch();
+  // Local browser automation may skip the menu. Public links always ask for a
+  // name, even when someone shares a development URL containing ?auto=1.
+  const localAutomation = navigator.webdriver && ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+  if (localAutomation && new URLSearchParams(location.search).get('auto') === '1') game.startMatch();
 }).catch((err) => {
   console.error(err);
   uiRoot.innerHTML = '';

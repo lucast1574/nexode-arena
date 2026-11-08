@@ -13,7 +13,7 @@ export class OnlinePanel {
 
   update(state, id, ping) {
     this.status.hidden = false;
-    this.status.textContent = `SALA PÚBLICA · ${state.players}/${state.maxPlayers} jugadores · ${state.bots} bots`
+    this.status.textContent = `SALA PÚBLICA · ${state.players} jugadores · ${state.bots} bots`
       + (ping === null ? '' : ` · ${ping} ms`);
     const title = document.createElement('h2');
     title.textContent = 'Suq Al-Rimal';

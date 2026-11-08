@@ -434,7 +434,7 @@ export class Menu {
     this.dom.btnPrimary.querySelector('span').textContent = 'Entrar a la sala';
     this.el.querySelector('.online-entry').hidden = false;
     this.el.querySelector('#mi-practice').hidden = false;
-    this.setOnlineStatus('Sala pública · hasta 8 jugadores · 6 bots · sin fuego amigo');
+    this.setOnlineStatus('Sala pública · sin límite de jugadores · 6 bots que reaparecen');
     this.dom.btnPrimary.querySelector('.hint').textContent = 'ENTER';
     this.dom.btnRestart.style.display = 'none';
     this.dom.btnQuit.style.display = 'none';

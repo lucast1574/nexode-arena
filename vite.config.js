@@ -1,6 +1,16 @@
 import { defineConfig } from 'vite';
 
+const buildId = Date.now().toString(36);
+
 export default defineConfig({
+  plugins: [{
+    name: 'version-game-assets',
+    transformIndexHtml: {
+      order: 'post',
+      handler: (html) => html.replace(/(["'])(\.\/game\.(?:js|css))\1/g,
+        (_, quote, asset) => `${quote}${asset}?v=${buildId}${quote}`)
+    }
+  }],
   base: './',
   // Stamped into the start screen. A browser tab that has been open across a
   // fix keeps serving the old module graph, and "have you reloaded" is not a

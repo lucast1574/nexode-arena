@@ -1,5 +1,14 @@
 import { test, expect } from '@playwright/test';
 
+test('a shared auto link still asks a real player for their name', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'webdriver', { get: () => false }));
+  await page.goto('/?auto=1&quality=1');
+  await page.waitForFunction(() => window.__ready === true);
+  await expect(page.locator('#operator-name')).toBeVisible();
+  await expect(page.locator('#online-status')).toContainText('sin límite');
+  expect(await page.evaluate(() => window.__game.state)).toBe('menu');
+});
+
 test('required names, one shared room, shared bots, movement, scoreboard and leaving', async ({ browser, baseURL }) => {
   const context = await browser.newContext({ viewport: { width: 960, height: 640 } });
   const alice = await context.newPage();
