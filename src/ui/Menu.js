@@ -84,6 +84,16 @@ export class Menu {
       btnRestart: q('#mi-restart'),
       btnQuit: q('#mi-quit')
     };
+    const nameInput = q('#operator-name');
+    try { nameInput.value = localStorage.getItem('arena.operator') || ''; } catch { /* storage unavailable */ }
+    nameInput.addEventListener('input', () => {
+      try { localStorage.setItem('arena.operator', nameInput.value); } catch { /* storage unavailable */ }
+    });
+    nameInput.addEventListener('keydown', (e) => {
+      if (e.code === 'Enter') { e.preventDefault(); nameInput.blur(); this.onStart?.(); }
+      if (e.code === 'Escape') nameInput.blur();
+    });
+    q('#mi-practice').addEventListener('click', () => this.onPractice?.());
 
     for (const b of this.el.querySelectorAll('.menu-item')) {
       b.addEventListener('mouseenter', () => this.audio?.playUI('hover'));
@@ -409,15 +419,22 @@ export class Menu {
 
   // --------------------------------------------------------------- states
 
+  playerName() { return this.el.querySelector('#operator-name').value.trim(); }
+
+  setOnlineStatus(message) {
+    this.el.querySelector('#online-status').textContent = message;
+  }
+
   showStart() {
     this.mode = 'start';
     this.el.classList.add('show');
-    this.dom.eyebrow.textContent = 'Team Deathmatch — Suq Al-Rimal';
+    this.dom.eyebrow.textContent = 'Cooperativo — Suq Al-Rimal';
     this.dom.title.textContent = 'NEXODE ARENA';
-    this.dom.sub.innerHTML =
-      'A market district at midday. Two fireteams, one street, no respawn timer worth waiting out.<br>'
-      + 'Everything you are about to see — terrain, buildings, weapon, sky and every sound — is generated at runtime.';
-    this.dom.btnPrimary.querySelector('span').textContent = 'Deploy';
+    this.dom.sub.textContent = 'Una sola sala para todos. Entra con tus amigos, forma equipo y combate contra seis bots en el mismo mapa.';
+    this.dom.btnPrimary.querySelector('span').textContent = 'Entrar a la sala';
+    this.el.querySelector('.online-entry').hidden = false;
+    this.el.querySelector('#mi-practice').hidden = false;
+    this.setOnlineStatus('Sala pública · hasta 8 jugadores · 6 bots · sin fuego amigo');
     this.dom.btnPrimary.querySelector('.hint').textContent = 'ENTER';
     this.dom.btnRestart.style.display = 'none';
     this.dom.btnQuit.style.display = 'none';
@@ -426,6 +443,8 @@ export class Menu {
   }
 
   showPause() {
+    this.el.querySelector('.online-entry').hidden = true;
+    this.el.querySelector('#mi-practice').hidden = true;
     this.mode = 'pause';
     this.el.classList.add('show');
     this.dom.eyebrow.textContent = 'Match paused';
@@ -511,9 +530,15 @@ const TEMPLATE = /* html */`
     <h1>NEXODE ARENA</h1>
     <div class="sub"></div>
   </div>
+  <div class="online-entry">
+    <label for="operator-name">Tu nombre</label>
+    <input id="operator-name" name="operator" minlength="2" maxlength="20" required autocomplete="nickname" placeholder="Escribe tu nombre" spellcheck="false" aria-describedby="online-status">
+    <p id="online-status" role="status"></p>
+  </div>
   <div class="menu-list">
     <button class="menu-item" id="mi-primary"><span>Deploy</span><span class="hint">ENTER</span></button>
     <button class="menu-item" id="mi-settings"><span>Settings</span><span class="hint">O</span></button>
+    <button class="menu-item" id="mi-practice"><span>Practicar sin conexión</span><span class="hint">SOLO</span></button>
     <button class="menu-item" id="mi-restart"><span>Restart match</span><span class="hint"></span></button>
     <button class="menu-item" id="mi-quit"><span>Abandon match</span><span class="hint"></span></button>
   </div>

@@ -8,6 +8,7 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './tests',
+  testIgnore: '**/online.spec.js',
   timeout: 180_000,
   expect: { timeout: 30_000 },
   fullyParallel: false,

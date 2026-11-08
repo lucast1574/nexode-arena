@@ -104,6 +104,7 @@ export class Combat {
 
   // ------------------------------------------------------------------ shots
   fireBullet(shot) {
+    if (shot.firstPerson) this.sendShot?.(shot);
     this.shotsFired++;
     const dir = _dir.copy(shot.direction).normalize();
     const origin = _origin.copy(shot.origin);
@@ -142,14 +143,14 @@ export class Combat {
           : charHit.zone === 'limb' ? spec.limbMultiplier : 1.0;
         const applied = damage * falloff * zoneMul * energy;
 
-        const killed = charHit.character.applyDamage(applied, {
+        const killed = !this.authoritativeVisuals && charHit.character.applyDamage(applied, {
           source: shot.owner, point: _point, direction: dir, zone: charHit.zone,
           impulse: 9.5 * energy, part: charHit.part
         });
 
         this._bloodImpact(_point, dir, charHit.zone);
         this.audio?.playFleshImpact(_point, charHit.zone);
-        if (shot.firstPerson) {
+        if (shot.firstPerson && !this.authoritativeVisuals) {
           this.onHitConfirm?.({ zone: charHit.zone, damage: applied, killed, position: _point.clone() });
         }
         if (killed) this.onKill?.(shot.owner, charHit.character, charHit.zone);
@@ -282,6 +283,7 @@ export class Combat {
     let best = null;
     for (const c of this.characters) {
       if (!c.alive || c === exclude || c.hitboxes === undefined) continue;
+      if (this.friendlyFire === false && c.team === exclude?.team) continue;
       if (c.boundsRadius !== undefined) {
         // Quick reject against the bounding sphere before touching the parts.
         // Against `boundsCenter`, not `position`: the latter is the root, on
@@ -683,6 +685,7 @@ export class Combat {
 
     for (const c of this.characters) {
       if (!c.alive) continue;
+      if (this.authoritativeVisuals || (this.friendlyFire === false && c.team === team && c !== owner)) continue;
       const d = c.position.distanceTo(position);
       if (d > GRENADE.radius) continue;
 

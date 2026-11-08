@@ -15,6 +15,7 @@ const uiRoot = document.getElementById('ui-root');
 const game = new Game(canvas, uiRoot);
 
 window.addEventListener('keydown', (e) => {
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
   if (e.repeat) return;
   if (game.handleKey?.(e.code)) e.preventDefault();
 }, false);

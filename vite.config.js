@@ -22,5 +22,8 @@ export default defineConfig({
       }
     }
   },
-  server: { port: 5173, strictPort: true }
+  server: { port: 5173, strictPort: true, proxy: {
+    '/arena': { target: 'ws://127.0.0.1:3000', ws: true },
+    '/api': { target: 'http://127.0.0.1:3000' }
+  } }
 });

@@ -9,3 +9,4 @@ playwright-report
 *.key
 shots
 ref
+server/*.test.js

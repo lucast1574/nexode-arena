@@ -26,6 +26,7 @@ import { HUD } from '../ui/HUD.js';
 import { Menu } from '../ui/Menu.js';
 import { Loading } from '../ui/Loading.js';
 import { showFatalOverlay } from '../ui/Fatal.js';
+import { Multiplayer } from '../network/Multiplayer.js';
 
 /**
  * Assembles every subsystem and owns the frame.
@@ -265,6 +266,10 @@ export class Game {
     this.grenades = new GrenadeController({
       player: this.player, audio: this.audio,
       onThrow: (origin, velocity) => {
+        if (this.multiplayer?.active) {
+          this.multiplayer.send({ type: 'grenade', origin: origin.toArray(), velocity: velocity.toArray() });
+          return;
+        }
         this.combat.throwGrenade({
           position: origin, velocity, owner: this.playerTarget, team: this.player.team
         });
@@ -288,6 +293,7 @@ export class Game {
     await loading.step(0.88, 'Building interface');
     this.hud = new HUD(this.uiRoot);
     this.menu = new Menu(this.uiRoot, { audio: this.audio });
+    this.multiplayer = new Multiplayer(this);
 
     this._wireCallbacks();
 
@@ -418,9 +424,13 @@ export class Game {
     this.match.onEnd = (winner, reason) => this._onMatchEnd(winner, reason);
 
     // ---- menu
-    this.menu.onStart = () => this.startMatch();
+    this.menu.onStart = () => this.multiplayer.join();
+    this.menu.onPractice = () => this.startMatch();
     this.menu.onResume = () => this.resume();
-    this.menu.onRestart = () => this.startMatch();
+    this.menu.onRestart = () => {
+      if (this.multiplayer.active) this.resume();
+      else this.startMatch();
+    };
     this.menu.onQuitToMenu = () => this.quitToMenu();
     this.menu.onSettingChanged = (key) => this._applySettings(key);
     // Saved settings from a previous session have to reach the renderer once
@@ -451,6 +461,8 @@ export class Game {
   // ------------------------------------------------------------ match flow
 
   startMatch() {
+    this.multiplayer.leave();
+    this.match.scoreLimit = 30;
     this.menu.hide();
     this.menu.hideBoard();
     this.hud.clear();
@@ -487,10 +499,33 @@ export class Game {
     this.hud.announce('Contact expected', 'Suq Al-Rimal — 13:40');
   }
 
+  prepareOnlineMatch() {
+    this.director.dispose();
+    this.combat.clear();
+    this.combat.authoritativeVisuals = true;
+    this.combat.friendlyFire = false;
+    this.combat.sendShot = (shot) => this.multiplayer.shoot(shot);
+    this.player.authoritativeHealth = true;
+    this.player.regenDelay = Infinity;
+    this.match.reset();
+    this.match.scoreLimit = 100;
+    this.menu.hide(); this.menu.hideBoard();
+    this.hud.clear(); this.hud.setVisible(true);
+    this.state = 'playing';
+    this.audio.init().then(() => this.audio.resume());
+    // Joining is asynchronous. Ask for a deliberate Resume click rather than
+    // requesting pointer lock outside the browser's user-gesture window.
+    if (!navigator.webdriver) this.pause();
+  }
+
   pause() {
     if (this.state !== 'playing') return;
     this.state = 'paused';
     this.menu.showPause();
+    if (this.multiplayer.active) {
+      this.menu.dom.btnRestart.style.display = 'none';
+      this.menu.dom.sub.textContent = 'Tus controles están en pausa. La sala sigue activa y puedes recibir daño.';
+    }
     this.input.releaseLock();
     this.audio.setMuffle(0.55);
   }
@@ -504,6 +539,7 @@ export class Game {
   }
 
   quitToMenu() {
+    this.multiplayer.leave();
     this.state = 'menu';
     this.hud.setVisible(false);
     this.hud.clear();
@@ -625,19 +661,21 @@ export class Game {
     this._steppedThisFrame = true;
     if (this.state !== 'playing') return;
 
-    this.match.update(dt);
+    if (!this.multiplayer.active) this.match.update(dt);
 
     if (this.player.alive) {
       const firing = this.input.action('fire');
-      if (this.input.actionPressed('grenade')) this.grenades.toggle();
+      if (!this.multiplayer.ended && this.input.actionPressed('grenade')) this.grenades.toggle();
       this.grenades.update(dt, { firing });
 
       // While a grenade is in hand the trigger belongs to it, and so does the
       // right mouse button — there is nothing to aim down.
       const armed = !this.grenades.blocksWeapon;
-      this.weapon.setTrigger(armed && firing);
+      this.weapon.setTrigger(armed && firing && !this.multiplayer.ended);
       this.player.wantsAds = armed && this.input.action('aim');
-      if (armed && this.input.actionPressed('reload')) this.weapon.startReload();
+      if (armed && this.input.actionPressed('reload')) {
+        if (this.weapon.startReload() && this.multiplayer.active) this.multiplayer.send({ type: 'reload' });
+      }
       if (armed && this.input.actionPressed('fireMode')) this.weapon.cycleFireMode();
       if (armed && this.input.actionPressed('inspect')) this._inspect();
     } else {
@@ -650,18 +688,19 @@ export class Game {
       const canSkip = this.respawnTimer <= this.match.respawnDelay - RESPAWN_SKIP_AFTER;
       const skipped = canSkip
         && (this.input.actionPressed('jump') || this.input.actionPressed('fire'));
-      if (this.respawnTimer <= 0 || skipped) this._respawnPlayer();
+      if (!this.multiplayer.active && (this.respawnTimer <= 0 || skipped)) this._respawnPlayer();
     }
 
     this.player.update(dt, this.time);
     this.playerTarget.sync();
     this.weapon.update(dt, this.time);
-    this.director.update(dt);
+    if (!this.multiplayer.active) this.director.update(dt);
     this.rigid.step(dt);
     this.combat.update(dt, this.time, this.camera);
   }
 
   _render(dt, alpha) {
+    this.multiplayer?.render(dt);
     if (this._resizePending) this._applyResize();
     const t0 = performance.now();
 
@@ -861,7 +900,7 @@ export class Game {
       this.hud.setDeathFade(Math.min(0.55, (this.match.respawnDelay - this.respawnTimer) * 0.5));
       this.hud.updateRespawn(
         this.respawnTimer,
-        this.respawnTimer <= this.match.respawnDelay - RESPAWN_SKIP_AFTER
+        !this.multiplayer.active && this.respawnTimer <= this.match.respawnDelay - RESPAWN_SKIP_AFTER
       );
     }
 
@@ -999,13 +1038,17 @@ export class Game {
 
   /** Global keys that work in every state. */
   handleKey(code) {
+    if (code === 'Tab' && this.multiplayer?.active && this.state === 'playing') {
+      this.multiplayer.panel.board.hidden = false;
+      return true;
+    }
     if (code === Settings.data.keybinds.pause) {
       if (this.state === 'playing') this.pause();
       else if (this.state === 'paused') this.resume();
       else if (this.menu.settingsOpen) this.menu.toggleSettings(false);
       return true;
     }
-    if (code === 'Enter' && this.state === 'menu') { this.startMatch(); return true; }
+    if (code === 'Enter' && this.state === 'menu') { this.menu.onStart?.(); return true; }
     // The pause menu has to be operable without a mouse. If the browser has
     // left the OS cursor confined to a corner of the screen, the Resume and
     // Quit buttons are somewhere the pointer cannot reach, and a player who

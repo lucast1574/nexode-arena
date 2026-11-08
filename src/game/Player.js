@@ -576,6 +576,7 @@ export class Player {
   }
 
   applyDamage(amount, source, kind = 'bullet') {
+    if (this.authoritativeHealth) return false;
     if (!this.alive || this.spawnProtect > 0) return false;
     this.health -= amount;
     this.lastDamage = { amount, source, kind, time: performance.now() / 1000 };

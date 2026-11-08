@@ -29,6 +29,7 @@ export class Director {
     this.characters = [];
     this.teams = { A: [], B: [] };
     this.player = null;
+    this.externalTargets = [];
     this._senseCursor = 0;
     this._respawnQueue = [];
     this.respawnDelay = 5.5;
@@ -160,6 +161,7 @@ export class Director {
     const list = [];
     for (const c of this.characters) if (c.team !== team) list.push(c);
     if (this.player && this.player.team !== team) list.push(this.player);
+    for (const target of this.externalTargets) if (target.team !== team) list.push(target);
     return list;
   }
 

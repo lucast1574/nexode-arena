@@ -23,6 +23,54 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; }
+
+.online-entry { max-width: 460px; margin: -20px 0 16px; }
+.online-entry label { display: block; font-size: 13px; color: var(--ink-dim); margin-bottom: 7px; }
+.online-entry input {
+  width: 100%; max-width: 320px; padding: 11px 12px; border: 1px solid var(--line);
+  background: #151515; color: var(--ink); font: inherit; border-radius: 2px; outline: none;
+}
+.online-entry input:focus { background: #242424; border-color: var(--ink-dim); }
+#online-status { color: var(--ink-dim); font: 12px/1.6 var(--sans); margin-top: 10px; min-height: 20px; }
+#online-hud { position: absolute; top: 70px; left: 28px; color: var(--ink); font: 11px/1.6 var(--mono); }
+#online-roster {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: min(520px, calc(100% - 32px)); max-height: 82%; overflow-y: auto;
+  padding: 24px; background: #141414; border: 1px solid var(--line); pointer-events: auto;
+}
+#online-roster h2 { font-size: 24px; }
+#online-roster p { font-size: 12px; color: var(--ink-dim); margin: 8px 0 18px; }
+#online-roster ol { list-style: none; }
+#online-roster li { display: flex; justify-content: space-between; gap: 16px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 14px; }
+#online-roster li span:last-child { font-variant-numeric: tabular-nums; white-space: nowrap; }
+#online-roster .local { color: var(--team-a); }
+.operator-label {
+  position: absolute; transform: translate(-50%, -100%); pointer-events: none;
+  padding: 4px 7px; border-radius: 2px; background: #141414; color: #82c9f2;
+  font: 12px/1.2 var(--sans); white-space: nowrap;
+}
+@media (max-height: 850px) and (min-width: 761px) {
+  #menu .menu-inner { top: 40px; transform: none; }
+  #menu .title-block { margin-bottom: 30px; }
+  #menu .title-block h1 { font-size: 52px; }
+  #menu .menu-footer { bottom: 26px; font-size: 10px; }
+}
+@media (max-width: 760px) {
+  #menu { overflow-y: auto; }
+  #ui-root #menu .frame { inset: 12px; }
+  #menu .menu-inner { position: relative; left: auto; top: auto; transform: none; margin: 46px 26px 28px; max-width: none; }
+  #menu .title-block { margin-bottom: 32px; }
+  #menu .title-block h1 { font-size: clamp(32px, 8vw, 54px); line-height: 1; }
+  #menu .title-block .eyebrow { font-size: 10px; letter-spacing: 0.16em; }
+  #menu .title-block .sub { font-size: 12px; line-height: 1.7; }
+  #menu .menu-footer { position: relative; left: auto; bottom: auto; margin: 0 26px 28px; font-size: 10px; letter-spacing: 0; line-height: 2; }
+  #menu .panel { position: fixed; inset: 18px; width: auto; max-height: calc(100% - 36px); transform: none; z-index: 3; padding: 20px; }
+  #online-hud { left: 16px; right: 16px; top: 65px; font-size: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
 
 html, body {
   width: 100%; height: 100%;
@@ -413,7 +461,7 @@ html, body {
 
 .menu-inner {
   position: absolute; left: 96px; top: 50%;
-  transform: translateY(-50%);
+    transform: translateY(calc(-50% - 24px));
   max-width: 620px;
 }
 .title-block { margin-bottom: 46px; }

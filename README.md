@@ -1,7 +1,19 @@
 # Nexode Arena
 
 FPS 3D para navegador preparado para la demostración de Nexode en la hackathon.
-Juego individual contra enemigos con IA; no incluye multijugador.
+Una sala pública cooperativa para hasta ocho jugadores contra seis bots. Cada jugador
+escribe su nombre antes de entrar. También incluye práctica individual sin conexión.
+
+## Jugar con amigos
+
+Abre https://nexode-arena.nexode.app, escribe tu nombre y pulsa **Entrar a la sala**.
+Todos entran en la misma partida; no hay códigos ni salas que crear. Tras conectar,
+pulsa **Resume** para activar los controles del ratón. Mantén Tab para ver el marcador.
+Los jugadores forman equipo contra los bots y no hay fuego amigo entre compañeros.
+Las rondas duran diez minutos o cien bajas; la siguiente comienza automáticamente.
+Al pulsar Escape se liberan tus controles, pero la partida continúa y puedes recibir daño.
+Las reapariciones y las bajas las decide el servidor. No hay cuentas ni progreso persistente.
+Si se reinicia el servicio, se reinicia la sala; vuelve a entrar desde el menú.
 
 ## Ejecutar localmente
 
@@ -10,14 +22,21 @@ npm ci
 npm run dev
 ```
 
+Para multijugador local, ejecuta `npm run build && npm start` y abre
+`http://localhost:3000`. Para desarrollar el cliente con recarga, deja también
+`npm run dev` activo: Vite reenvía WebSocket y API al servidor local del puerto 3000.
+`npm run test:server` verifica el protocolo y el combate del servidor;
+`npm run test:online` prueba dos navegadores en la misma sala.
+
 ## Preparación para Nexode
 
 - Repositorio independiente, rama `main`.
-- Dockerfile en la raíz: compila Vite y sirve `dist/` con nginx.
+- Dockerfile en la raíz: compila Vite y ejecuta un servidor Node.js de producción.
+- El mismo proceso sirve `dist/`, `/arena` (WebSocket) y `/api/status`.
 - Tipo de servicio: `FRONTEND`; puerto interno: `3000`, escucha en `0.0.0.0`.
 - Health check: `/healthz`.
 - No requiere base de datos, variables secretas ni servicios externos.
-- El despliegue se hará en un chat posterior; este repositorio no provisiona recursos.
+- Servicio existente: `https://nexode-arena.nexode.app`, despliegue automático desde `main`.
 - Antes de desplegar, comprobar `nexode_me` y los requisitos actuales del MCP.
 
 ```sh
@@ -35,6 +54,12 @@ Nexode Arena es el nombre de esta copia para la demo; no implica autoría del ju
 ---
 
 ## Documentación original
+
+La documentación que sigue describe la versión individual original. Su restricción
+de no usar red se conserva en la práctica individual; el modo online añade WebSocket
+y la dependencia de servidor `ws`. El servidor reutiliza el mapa, navegación, IA,
+colisiones y balística del cliente, simula a 30 Hz y publica estados a 20 Hz.
+El movimiento local se predice y se valida por velocidad y colisiones en el servidor.
 
 # Dust Corridor
 

@@ -40,6 +40,7 @@ function soldierGeometry(team, variant, rng) {
 export class Character {
   constructor({ id, team, variant, factory, bvh, rng, prevViewProjection, shadowSystem }) {
     this.id = id;
+    this.factory = factory;
     this.team = team;
     this.alive = true;
     this.health = 100;
@@ -230,6 +231,8 @@ export class Character {
   }
 
   dispose() {
+    const index = this.factory.materials.indexOf(this.material);
+    if (index >= 0) this.factory.materials.splice(index, 1);
     this.material.dispose();
     this.shadowMaterial?.dispose();
   }
